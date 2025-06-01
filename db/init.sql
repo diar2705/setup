@@ -1,3 +1,5 @@
+
+
 --
 -- PostgreSQL database dump
 --
@@ -17,6 +19,9 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE USER keycloak WITH PASSWORD 'keycloak';
+CREATE DATABASE keycloak OWNER keycloak;
 --
 -- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
 --
