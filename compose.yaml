@@ -1,43 +1,28 @@
 services:
   db:
-    image: postgres:15
-    container_name: postgres-db
-    environment:
-      - POSTGRES_DB=bettergr
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=bettergr2425
-    volumes:
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    image: postgres:latest
     ports:
-      - "5433:5432"
+      - "5432:5432"
     networks:
       - back-tier
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=bettergr2425
+      - POSTGRES_DB=bettergr
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
-      timeout: 3s
+      timeout: 5s
       retries: 20
-
+  
   keycloak:
-    image: quay.io/keycloak/keycloak:23.0
+    image: quay.io/keycloak/keycloak:latest
     command: start-dev
     ports:
-      - "80:80"
-    environment:
-      - KC_DB=postgres
-      - KC_DB_URL_DATABASE=keycloak
-      - KC_DB_URL_HOST=db
-      - KC_DB_URL_PORT=5432
-      - KC_DB_USER=keycloak
-      - KC_DB_PASSWORD=keycloak
-      - KC_HOSTNAME=auth.bettergr.org
-      - KC_HOSTNAME_PORT=80
-      - KC_HTTP_PORT=80
-      - KEYCLOAK_ADMIN=admin
-      - KEYCLOAK_ADMIN_PASSWORD=admin
-    depends_on:
-      db:
-        condition: service_healthy
+      - "8080:8080"
     networks:
       front-tier:
         aliases:
@@ -45,13 +30,29 @@ services:
       back-tier:
         aliases:
           - auth.bettergr.org
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://db:5432/keycloak?sslmode=disable
+      - KC_DB_USERNAME=keycloak
+      - KC_DB_PASSWORD=keycloak
+      - KC_HOSTNAME=auth.bettergr.org
+      - KC_HOSTNAME_PORT=8080
+      - KC_HTTP_ENABLED=true
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: on-failure
 
-  students:
-    build: ../students-microservice
+  grades:
+    image: ghcr.io/bettergr/grades-microservice:latest
+    networks:
+      - back-tier
     ports:
       - "50051:50051"
     environment:
-      - AUTH_ISSUER=http://auth.bettergr.org/realms/betterGR
+      - AUTH_ISSUER=http://auth.bettergr.org:8080/realms/betterGR
       - DSN=postgres://postgres:bettergr2425@db:5432/bettergr?sslmode=disable
       - DP_NAME=bettergr
       - GRPC_PORT=50051
@@ -60,16 +61,16 @@ services:
         condition: service_started
       db:
         condition: service_healthy
-    networks:
-      - back-tier
     restart: on-failure
 
-  courses:
-    build: ../courses-microservice
+  students:
+    image: ghcr.io/bettergr/students-microservice:latest
+    networks:
+      - back-tier
     ports:
       - "50052:50052"
     environment:
-      - AUTH_ISSUER=http://auth.bettergr.org/realms/betterGR
+      - AUTH_ISSUER=http://auth.bettergr.org:8080/realms/betterGR
       - DSN=postgres://postgres:bettergr2425@db:5432/bettergr?sslmode=disable
       - DP_NAME=bettergr
       - GRPC_PORT=50052
@@ -78,35 +79,16 @@ services:
         condition: service_started
       db:
         condition: service_healthy
-    networks:
-      - back-tier
     restart: on-failure
 
-  grades:
-    build: ../grades-microservice
-    ports:
-      - "50053:50053"
-    environment:
-      - AUTH_ISSUER=http://auth.bettergr.org/realms/betterGR
-      - DSN=postgres://postgres:bettergr2425@db:5432/bettergr?sslmode=disable
-      - DP_NAME=bettergr
-      - GRPC_PORT=50053
-    depends_on:
-      keycloak:
-        condition: service_started
-      db:
-        condition: service_healthy
+  courses:
+    image: ghcr.io/bettergr/courses-microservice:latest
     networks:
       - back-tier
-    restart: on-failure
-
-
-  staff:
-    build: ../staff-microservice
     ports:
       - "50054:50054"
     environment:
-      - AUTH_ISSUER=http://auth.bettergr.org/realms/betterGR
+      - AUTH_ISSUER=http://auth.bettergr.org:8080/realms/betterGR
       - DSN=postgres://postgres:bettergr2425@db:5432/bettergr?sslmode=disable
       - DP_NAME=bettergr
       - GRPC_PORT=50054
@@ -115,17 +97,16 @@ services:
         condition: service_started
       db:
         condition: service_healthy
-    networks:
-      - back-tier
     restart: on-failure
 
-
-  homework:
-    build: ../homework-microservice
+  staff:
+    image: ghcr.io/bettergr/staff-microservice:latest
+    networks:
+      - back-tier
     ports:
       - "50055:50055"
     environment:
-      - AUTH_ISSUER=http://auth.bettergr.org/realms/betterGR
+      - AUTH_ISSUER=http://auth.bettergr.org:8080/realms/betterGR
       - DSN=postgres://postgres:bettergr2425@db:5432/bettergr?sslmode=disable
       - DP_NAME=bettergr
       - GRPC_PORT=50055
@@ -134,10 +115,73 @@ services:
         condition: service_started
       db:
         condition: service_healthy
-    networks:
-      - back-tier
     restart: on-failure
+
+
+  api-gateway:
+    image: ghcr.io/bettergr/api-gateway:latest
+    networks:
+      - front-tier
+      - back-tier
+    ports:
+      - "1234:1234"
+    environment:
+      - API_GATEWAY_PORT=1234
+      - CLIENT_SECRET=**********
+      - KEYCLOAK_URL=http://auth.betterGR.org
+      - REDIRECT_URI=http://web-app:3000/callback
+      - MS_STUDENT_HOST=students
+      - MS_COURSE_HOST=courses
+      - MS_GRADE_HOST=grades
+      - MS_STAFF_HOST=staff
+      - URI_SCHEME=http
+      - URI_HOST=api.bettergr.org
+      - GRADES_PORT=grades:50051
+      - STUDENTS_PORT=students:50052
+      - COURSES_PORT=courses:50054
+      - STAFF_PORT=staff:50055
+    depends_on:
+      - students
+      - courses
+      - grades
+      - staff
+      - keycloak
+    restart: on-failure
+
+  web-app:
+    image: ghcr.io/bettergr/bettergr-web-app:latest
+    networks:
+      - front-tier
+    ports:
+      - "3000:3000"
+    environment:
+      - NUXT_PUBLIC_GRAPHQL_HOST=http://api-gateway:1234/query
+      - NUXT_PUBLIC_GRAPHQL_WS_HOST=ws://api-gateway:1234/query
+      - NUXT_PUBLIC_KEYCLOAK_URL=http://auth.bettergr.org
+      - NUXT_PUBLIC_KEYCLOAK_REALM=betterGR
+      - NUXT_PUBLIC_KEYCLOAK_CLIENT_ID=bettergr-frontend
+      - GRAPHQL_SCHEMA_URL=http://api-gateway:1234/graphql
+    depends_on:
+      - keycloak
+      - api-gateway
+    restart: on-failure
+
+  nginx:
+    image: nginx:latest
+    ports:
+      - "80:80"
+    networks:
+      - front-tier
+    volumes:
+      - ./ngnix/ngnix.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - web-app
+      - api-gateway
+      - keycloak
 
 networks:
   front-tier: {}
   back-tier: {}
+
+volumes:
+  db_data:
